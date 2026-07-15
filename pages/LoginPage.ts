@@ -23,7 +23,7 @@ export class LoginPage extends BasePage {
   }
 
   async open() {
-    await this.goto('https://lockeruat.glcredentials.com/');
+    await this.goto('https://lockerdev.glcredentials.com/');
   }
 
   async openLoginForm() {

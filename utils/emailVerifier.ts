@@ -20,6 +20,7 @@ export interface FoundEmail {
   text: string;
   html: string;
   date?: Date;
+  attachments?: any[];
 }
 
 export interface ShareLinks {
@@ -36,18 +37,18 @@ export interface ShareLinks {
  *
  * Expected patterns (from the real email template):
  *   Download button URL:
- *     https://lockeruat.glcredentials.com/report/api/share-credentials/view/{trackId}
+ *     https://lockerdev.glcredentials.com/report/api/share-credentials/view/{trackId}
  *   Verification page URL:
- *     https://lockeruat.glcredentials.com/verify-credentials?type=HS&trackId={trackId}
+ *     https://lockerdev.glcredentials.com/verify-credentials?type=HS&trackId={trackId}
  */
 export function extractShareLinks(body: string): ShareLinks {
   const downloadMatches = [
     ...body.matchAll(
-      /https:\/\/lockeruat\.glcredentials\.com\/report\/api\/share-credentials\/view\/([a-f0-9-]{36})/gi
+      /https:\/\/lockerdev\.glcredentials\.com\/report\/api\/share-credentials\/view\/([a-f0-9-]{36})/gi
     ),
   ];
   const verifyMatch = body.match(
-    /https:\/\/lockeruat\.glcredentials\.com\/verify-credentials\?[^\s"'<)]+/i
+    /https:\/\/lockerdev\.glcredentials\.com\/verify-credentials\?[^\s"'<)]+/i
   );
 
   const downloadUrl = downloadMatches[0]?.[0] ?? null;
@@ -121,6 +122,7 @@ export async function waitForShareEmail(options: WaitForEmailOptions): Promise<F
                 text: parsed.text || '',
                 html: (parsed.html as string) || '',
                 date: parsed.date,
+                attachments: parsed.attachments || [],
               };
             }
           }

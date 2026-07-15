@@ -31,7 +31,7 @@ test.describe.serial('gll_shareMail_check - share to institution', () => {
     await dashboard.accountMenu.logoutAs(INSTITUTION_SHARE.accountMenuLabel);
   });
 
-  test('check in dallas the mail is correct or not', async ({ page }) => {
+  test('check in institute the mail is correct or not', async ({ page }) => {
     const loginPage = new LoginPage(page);
     const receivedCredentials = new ReceivedCredentialsPage(page);
 

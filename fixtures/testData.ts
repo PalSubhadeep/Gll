@@ -34,7 +34,7 @@ export const EXPECTED_EMAIL = {
   institution: required('EXPECTED_INSTITUTION_NAME'),
   senderContactEmail: required('EXPECTED_SENDER_CONTACT_EMAIL'),
   subjectContains: 'has shared a transcript with you',
-  fromContains: 'support@glcredentials.com',
+  fromContains: 'noreply@glcredentials.com',
 };
 
 // ---------------------------------------------------------------------------
