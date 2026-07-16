@@ -50,6 +50,90 @@ function cleanDirectory(dir) {
   }
 }
 
+// Helper to strip quotes from values
+function stripQuotes(str) {
+  if (!str) return '';
+  let val = str.trim();
+  if (val.startsWith('"') && val.endsWith('"')) {
+    val = val.substring(1, val.length - 1).trim();
+  }
+  if (val.startsWith("'") && val.endsWith("'")) {
+    val = val.substring(1, val.length - 1).trim();
+  }
+  return val;
+}
+
+// Helper to parse create-admin arguments
+function parseCreateAdminArgs(content) {
+  const argsString = content.substring('!create-admin'.length).trim();
+  if (!argsString) return null;
+
+  const isKeyValue = argsString.toLowerCase().includes('username=') || argsString.toLowerCase().includes('email=');
+
+  if (isKeyValue) {
+    const result = {
+      username: '',
+      firstName: '',
+      lastName: '',
+      email: '',
+      university: '',
+      roles: [],
+      campus: ''
+    };
+
+    const regex = /(username|firstname|lastname|email|university|roles|campus)\s*=\s*/gi;
+    let match;
+    const matches = [];
+    while ((match = regex.exec(argsString)) !== null) {
+      matches.push({
+        key: match[1].toLowerCase(),
+        index: match.index,
+        length: match[0].length
+      });
+    }
+
+    if (matches.length === 0) return null;
+    matches.sort((a, b) => a.index - b.index);
+
+    for (let i = 0; i < matches.length; i++) {
+      const current = matches[i];
+      const startValueIdx = current.index + current.length;
+      const endValueIdx = (i + 1 < matches.length) ? matches[i + 1].index : argsString.length;
+      let val = argsString.substring(startValueIdx, endValueIdx).trim();
+
+      if (current.key === 'username') result.username = stripQuotes(val);
+      else if (current.key === 'firstname') result.firstName = stripQuotes(val);
+      else if (current.key === 'lastname') result.lastName = stripQuotes(val);
+      else if (current.key === 'email') result.email = stripQuotes(val);
+      else if (current.key === 'university') result.university = stripQuotes(val);
+      else if (current.key === 'roles') {
+        result.roles = stripQuotes(val).split(',').map(r => stripQuotes(r)).filter(Boolean);
+      }
+      else if (current.key === 'campus') result.campus = stripQuotes(val);
+    }
+    return result;
+  } else {
+    const regex = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
+    const matches = [];
+    let match;
+    while ((match = regex.exec(argsString)) !== null) {
+      matches.push(match[1] || match[2] || match[0]);
+    }
+
+    if (matches.length < 6) return null;
+
+    return {
+      username: stripQuotes(matches[0]),
+      firstName: stripQuotes(matches[1]),
+      lastName: stripQuotes(matches[2]),
+      email: stripQuotes(matches[3]),
+      university: stripQuotes(matches[4]),
+      roles: stripQuotes(matches[5]).split(',').map(r => stripQuotes(r)).filter(Boolean),
+      campus: stripQuotes(matches[6] || '')
+    };
+  }
+}
+
 client.once('ready', () => {
   console.log(`\n==================================================`);
   console.log(`🤖 Bot logged in successfully as: ${client.user.tag}`);
@@ -102,11 +186,12 @@ client.on('messageCreate', async (message) => {
     const helpEmbed = new EmbedBuilder()
       .setTitle('ℹ️ Playwright Test Bot Help')
       .setColor('#3498db')
-      .setDescription('Run Playwright tests directly from Discord and receive reports.')
+      .setDescription('Run Playwright tests or trigger admin creation directly from Discord.')
       .addFields(
         { name: '`!run-tests`', value: 'Runs all Playwright tests (headless).' },
         { name: '`!run-tests <script>`', value: 'Runs a specific script from package.json (e.g. `!run-tests register`, `!run-tests shareEmail`).' },
-        { name: '`!run-tests <spec-name>`', value: 'Runs a specific spec file (e.g. `!run-tests registration`).' }
+        { name: '`!run-tests <spec-name>`', value: 'Runs a specific spec file (e.g. `!run-tests registration`).' },
+        { name: '`!create-admin <args>`', value: 'Creates a new Administrator account.\n*Formats supported:*\n1. Positional: `!create-admin username FirstName LastName email@test.com "University Name" Role1,Role2`\n2. Key-value: `!create-admin username=usr firstname=fn lastname=ln email=em university="Univ" roles=Role1,Role2`' }
       );
     return message.channel.send({ embeds: [helpEmbed] });
   }
@@ -216,6 +301,110 @@ client.on('messageCreate', async (message) => {
         reportEmbed.addFields({ name: 'Execution Output', value: `\`\`\`text\n${output || 'No output'}\n\`\`\`` });
         await statusMessage.edit({ embeds: [reportEmbed], files: attachments });
       }
+    });
+  }
+
+  // Create admin command
+  if (content.startsWith('!create-admin')) {
+    const adminData = parseCreateAdminArgs(content);
+    if (!adminData) {
+      const errorEmbed = new EmbedBuilder()
+        .setTitle('❌ Invalid Command Format')
+        .setColor('#e74c3c')
+        .setDescription('Please provide all required fields in one of these formats:')
+        .addFields(
+          { name: '1. Key-Value format (recommended if spaces in names/fields)', value: '`!create-admin username=receiver01 firstname=John lastname=Doe email=receiver01@test.com university="Dallas Baptist University" roles=Receiver,Counselor`' },
+          { name: '2. Positional format (quotes for names with spaces)', value: '`!create-admin receiver01 John Doe receiver01@test.com "Dallas Baptist University" Receiver,Counselor`' }
+        );
+      return message.channel.send({ embeds: [errorEmbed] });
+    }
+
+    const startEmbed = new EmbedBuilder()
+      .setTitle('⏳ Creating Administrator')
+      .setColor('#f1c40f')
+      .setDescription(`Starting automation for **${adminData.username}** (${adminData.firstName} ${adminData.lastName})...\nUniversity: *${adminData.university}*${adminData.campus ? `\nCampus: *${adminData.campus}*` : ''}\nRoles: *${adminData.roles.join(', ')}*`)
+      .setTimestamp();
+
+    const statusMessage = await message.channel.send({ embeds: [startEmbed] });
+
+    // 1. Write the input data to admin_input.json
+    const inputPath = path.join(__dirname, '..', 'admin_input.json');
+    const outputPath = path.join(__dirname, '..', 'admin_output.json');
+    
+    // Clean up old output/input if they exist
+    if (fs.existsSync(outputPath)) {
+      try { fs.unlinkSync(outputPath); } catch(e) {}
+    }
+    if (fs.existsSync(inputPath)) {
+      try { fs.unlinkSync(inputPath); } catch(e) {}
+    }
+
+    fs.writeFileSync(inputPath, JSON.stringify(adminData, null, 2));
+
+    // 2. Clean test-results folder
+    const testResultsDir = path.join(__dirname, '..', 'test-results');
+    cleanDirectory(testResultsDir);
+
+    const command = 'npx playwright test tests/createAdmin.spec.ts --headed';
+
+    // 3. Execute test
+    exec(command, { cwd: path.join(__dirname, '..') }, async (error, stdout, stderr) => {
+      const output = stdout + '\n' + stderr;
+      console.log(output);
+
+      // 4. Read outcomes
+      let outcome = { success: false, error: 'Could not retrieve test output.' };
+      if (fs.existsSync(outputPath)) {
+        try {
+          outcome = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+        } catch (e) {
+          console.error('Error parsing admin_output.json:', e);
+        }
+      }
+
+      const resultColor = outcome.success ? '#2ecc71' : '#e74c3c';
+      const resultTitle = outcome.success ? '✅ Administrator Created' : '❌ Administrator Creation Failed';
+
+      // Collect attachments (screenshots/videos) from test-results
+      const attachments = [];
+      const files = getTestAttachments(testResultsDir);
+      for (const file of files) {
+        if (fs.existsSync(file)) {
+          attachments.push(new AttachmentBuilder(file));
+        }
+      }
+
+      const reportEmbed = new EmbedBuilder()
+        .setTitle(resultTitle)
+        .setColor(resultColor)
+        .setDescription(outcome.success ? `Successfully created administrator user **${adminData.username}**.` : `Failed to create administrator user **${adminData.username}**.`)
+        .addFields(
+          { name: 'Username', value: adminData.username, inline: true },
+          { name: 'Name', value: `${adminData.firstName} ${adminData.lastName}`, inline: true },
+          { name: 'Email', value: adminData.email, inline: true },
+          { name: 'University', value: adminData.university, inline: true }
+        )
+        .setTimestamp();
+
+      if (adminData.campus) {
+        reportEmbed.addFields({ name: 'Campus', value: adminData.campus, inline: true });
+      }
+
+      reportEmbed.addFields({ name: 'Roles', value: adminData.roles.join(', '), inline: true });
+
+      if (!outcome.success && outcome.error) {
+        reportEmbed.addFields({ name: 'Error Message', value: `\`\`\`text\n${outcome.error.substring(0, 800)}\n\`\`\`` });
+      }
+
+      // Cleanup files
+      if (fs.existsSync(inputPath)) {
+        try { fs.unlinkSync(inputPath); } catch(e) {}
+      }
+      if (fs.existsSync(outputPath)) {
+        try { fs.unlinkSync(outputPath); } catch(e) {}
+      }
+
+      await statusMessage.edit({ embeds: [reportEmbed], files: attachments });
     });
   }
 });
