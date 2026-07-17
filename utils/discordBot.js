@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -134,7 +134,7 @@ function parseCreateAdminArgs(content) {
   }
 }
 
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`\n==================================================`);
   console.log(`🤖 Bot logged in successfully as: ${client.user.tag}`);
   console.log(`==================================================`);
@@ -147,8 +147,311 @@ client.once('ready', () => {
     console.log(`📡 Listening for commands in Channel ID: ${CHANNEL_ID}`);
   }
   console.log(`==================================================\n`);
+
+  // Register Slash Commands globally
+  try {
+    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+    const commands = [
+      new SlashCommandBuilder()
+        .setName('help-tests')
+        .setDescription('Show help and available commands for testing'),
+
+      new SlashCommandBuilder()
+        .setName('run-tests')
+        .setDescription('Run Playwright tests')
+        .addStringOption(option =>
+          option.setName('testname')
+            .setDescription('Name of the test script or spec file to run (optional)')
+            .setRequired(false)
+            .addChoices(
+              { name: 'All Tests', value: 'all' },
+              { name: 'shareEmail', value: 'shareEmail' },
+              { name: 'shareInst', value: 'shareInst' },
+              { name: 'scheduledShare', value: 'scheduledShare' },
+              { name: 'shareDoc', value: 'shareDoc' }
+            )),
+
+      new SlashCommandBuilder()
+        .setName('create-admin')
+        .setDescription('Create a new administrator user via Super Admin Portal')
+        .addStringOption(option =>
+          option.setName('username')
+            .setDescription('Username for the new admin')
+            .setRequired(true))
+        .addStringOption(option =>
+          option.setName('firstname')
+            .setDescription('First name')
+            .setRequired(true))
+        .addStringOption(option =>
+          option.setName('lastname')
+            .setDescription('Last name')
+            .setRequired(true))
+        .addStringOption(option =>
+          option.setName('email')
+            .setDescription('Email address')
+            .setRequired(true))
+        .addStringOption(option =>
+          option.setName('university')
+            .setDescription('University name')
+            .setRequired(true))
+        .addStringOption(option =>
+          option.setName('roles')
+            .setDescription('Comma-separated roles (e.g. Counselor, Receiver)')
+            .setRequired(true))
+        .addStringOption(option =>
+          option.setName('campus')
+            .setDescription('Campus name (optional)')
+            .setRequired(false))
+    ].map(command => command.toJSON());
+
+    console.log('Started refreshing application (/) commands.');
+    await rest.put(
+      Routes.applicationCommands(client.user.id),
+      { body: commands }
+    );
+    console.log('Successfully reloaded application (/) commands.');
+  } catch (error) {
+    console.error('Error registering slash commands:', error);
+  }
 });
 
+// Handle Slash Command Interactions
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName } = interaction;
+
+  // Check channel constraints (only check if interaction is in a server/guild)
+  if (interaction.guild && CHANNEL_ID && CHANNEL_ID !== 'your_channel_id_here') {
+    if (interaction.channelId !== CHANNEL_ID) {
+      return interaction.reply({
+        content: `❌ Bot commands can only be executed in the designated channel (<#${CHANNEL_ID}>).`,
+        ephemeral: true
+      });
+    }
+  }
+
+  // help-tests command
+  if (commandName === 'help-tests') {
+    const helpEmbed = new EmbedBuilder()
+      .setTitle('ℹ️ Playwright Test Bot Help')
+      .setColor('#3498db')
+      .setDescription('Run Playwright tests or trigger admin creation directly from Discord.')
+      .addFields(
+        { name: '`/run-tests`', value: 'Runs all or specific Playwright tests (headless).' },
+        { name: '`/create-admin`', value: 'Creates a new Administrator account using native form fields.' }
+      );
+    return interaction.reply({ embeds: [helpEmbed] });
+  }
+
+  // run-tests command
+  if (commandName === 'run-tests') {
+    const testArg = interaction.options.getString('testname');
+
+    let command = 'npx playwright test';
+    let targetDescription = 'all tests';
+
+    if (testArg && testArg !== 'all') {
+      const knownScripts = ['shareEmail', 'shareInst', 'scheduledShare', 'shareDoc', 'register', 'debugRegister'];
+      if (knownScripts.includes(testArg)) {
+        command = `npm run ${testArg}`;
+        targetDescription = `npm script: ${testArg}`;
+      } else {
+        const specName = testArg.endsWith('.spec.ts') ? testArg : `${testArg}.spec.ts`;
+        command = `npx playwright test tests/${specName}`;
+        targetDescription = `spec file: ${specName}`;
+      }
+    }
+
+    const startEmbed = new EmbedBuilder()
+      .setTitle('⏳ Playwright Execution Started')
+      .setColor('#f1c40f')
+      .setDescription(`Executing **${targetDescription}** on dev environment...\nCommand: \`${command}\``)
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [startEmbed] });
+
+    // Clean test-results folder
+    const testResultsDir = path.join(__dirname, '..', 'test-results');
+    cleanDirectory(testResultsDir);
+
+    // Execute the tests
+    exec(command, { cwd: path.join(__dirname, '..') }, async (error, stdout, stderr) => {
+      const output = stdout + '\n' + stderr;
+      console.log(output);
+
+      // Parse results
+      const passedMatch = output.match(/(\d+)\s+passed/);
+      const failedMatch = output.match(/(\d+)\s+failed/);
+      const flakyMatch = output.match(/(\d+)\s+flaky/);
+      const skippedMatch = output.match(/(\d+)\s+skipped/);
+      const durationMatch = output.match(/passed\s+\(([\w\s.]+)\)/) || output.match(/\(([\w\s.]+)\)/);
+
+      const passedCount = passedMatch ? parseInt(passedMatch[1], 10) : 0;
+      const failedCount = failedMatch ? parseInt(failedMatch[1], 10) : 0;
+      const flakyCount = flakyMatch ? parseInt(flakyMatch[1], 10) : 0;
+      const skippedCount = skippedMatch ? parseInt(skippedMatch[1], 10) : 0;
+      const duration = durationMatch ? durationMatch[1] : 'unknown duration';
+
+      const isSuccess = failedCount === 0 && error === null;
+      const resultColor = isSuccess ? '#2ecc71' : '#e74c3c';
+      const resultTitle = isSuccess ? '✅ Playwright Tests Passed' : '❌ Playwright Tests Failed';
+
+      // Build failure details if any
+      let failureDetails = '';
+      if (!isSuccess) {
+        const errorLines = output.split('\n')
+          .filter(line => line.includes('Error:') || line.includes('Test timeout') || line.includes('Call log:'))
+          .slice(0, 10)
+          .join('\n');
+        failureDetails = errorLines ? `\`\`\`text\n${errorLines.substring(0, 800)}\n\`\`\`` : '\nCheck attached logs/screenshots.';
+      }
+
+      // Collect attachments (screenshots/videos) from test-results
+      const attachments = [];
+      const files = getTestAttachments(testResultsDir);
+      for (const file of files) {
+        if (fs.existsSync(file)) {
+          attachments.push(new AttachmentBuilder(file));
+        }
+      }
+
+      const reportEmbed = new EmbedBuilder()
+        .setTitle(resultTitle)
+        .setColor(resultColor)
+        .setDescription(`Completed running **${targetDescription}**`)
+        .addFields(
+          { name: 'Summary', value: `✅ Passed: **${passedCount}**\n❌ Failed: **${failedCount}**\n⚠️ Flaky: **${flakyCount}**\n⏭️ Skipped: **${skippedCount}**`, inline: true },
+          { name: 'Duration', value: `⏱️ ${duration}`, inline: true }
+        )
+        .setTimestamp();
+
+      if (failureDetails) {
+        reportEmbed.addFields({ name: 'Failure Details (first few lines)', value: failureDetails });
+      }
+
+      if (output.length > 1024) {
+        const logPath = path.join(__dirname, '..', 'test-run.log');
+        try {
+          fs.writeFileSync(logPath, output);
+          attachments.push(new AttachmentBuilder(logPath));
+          await interaction.editReply({ embeds: [reportEmbed], files: attachments });
+          fs.unlinkSync(logPath);
+        } catch (e) {
+          console.error('Error handling log file attachment:', e);
+          reportEmbed.addFields({ name: 'Execution Output', value: 'Check console logs (too long to display).' });
+          await interaction.editReply({ embeds: [reportEmbed], files: attachments });
+        }
+      } else {
+        reportEmbed.addFields({ name: 'Execution Output', value: `\`\`\`text\n${output || 'No output'}\n\`\`\`` });
+        await interaction.editReply({ embeds: [reportEmbed], files: attachments });
+      }
+    });
+  }
+
+  // create-admin command
+  if (commandName === 'create-admin') {
+    const adminData = {
+      username: interaction.options.getString('username'),
+      firstName: interaction.options.getString('firstname'),
+      lastName: interaction.options.getString('lastname'),
+      email: interaction.options.getString('email'),
+      university: interaction.options.getString('university'),
+      roles: interaction.options.getString('roles').split(',').map(r => r.trim()).filter(Boolean),
+      campus: interaction.options.getString('campus') || ''
+    };
+
+    const startEmbed = new EmbedBuilder()
+      .setTitle('⏳ Creating Administrator')
+      .setColor('#f1c40f')
+      .setDescription(`Starting automation for **${adminData.username}** (${adminData.firstName} ${adminData.lastName})...\nUniversity: *${adminData.university}*${adminData.campus ? `\nCampus: *${adminData.campus}*` : ''}\nRoles: *${adminData.roles.join(', ')}*`)
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [startEmbed] });
+
+    // Write input data to admin_input.json
+    const inputPath = path.join(__dirname, '..', 'admin_input.json');
+    const outputPath = path.join(__dirname, '..', 'admin_output.json');
+
+    // Clean up old output/input if they exist
+    if (fs.existsSync(outputPath)) {
+      try { fs.unlinkSync(outputPath); } catch(e) {}
+    }
+    if (fs.existsSync(inputPath)) {
+      try { fs.unlinkSync(inputPath); } catch(e) {}
+    }
+
+    fs.writeFileSync(inputPath, JSON.stringify(adminData, null, 2));
+
+    // Clean test-results folder
+    const testResultsDir = path.join(__dirname, '..', 'test-results');
+    cleanDirectory(testResultsDir);
+
+    const command = 'npx playwright test tests/createAdmin.spec.ts --headed';
+
+    // Execute test
+    exec(command, { cwd: path.join(__dirname, '..') }, async (error, stdout, stderr) => {
+      const output = stdout + '\n' + stderr;
+      console.log(output);
+
+      // Read outcomes
+      let outcome = { success: false, error: 'Could not retrieve test output.' };
+      if (fs.existsSync(outputPath)) {
+        try {
+          outcome = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+        } catch (e) {
+          console.error('Error parsing admin_output.json:', e);
+        }
+      }
+
+      const resultColor = outcome.success ? '#2ecc71' : '#e74c3c';
+      const resultTitle = outcome.success ? '✅ Administrator Created' : '❌ Administrator Creation Failed';
+
+      // Collect attachments (screenshots/videos) from test-results
+      const attachments = [];
+      const files = getTestAttachments(testResultsDir);
+      for (const file of files) {
+        if (fs.existsSync(file)) {
+          attachments.push(new AttachmentBuilder(file));
+        }
+      }
+
+      const reportEmbed = new EmbedBuilder()
+        .setTitle(resultTitle)
+        .setColor(resultColor)
+        .setDescription(outcome.success ? `Successfully created administrator user **${adminData.username}**.` : `Failed to create administrator user **${adminData.username}**.`)
+        .addFields(
+          { name: 'Username', value: adminData.username, inline: true },
+          { name: 'Name', value: `${adminData.firstName} ${adminData.lastName}`, inline: true },
+          { name: 'Email', value: adminData.email, inline: true },
+          { name: 'University', value: adminData.university, inline: true }
+        )
+        .setTimestamp();
+
+      if (adminData.campus) {
+        reportEmbed.addFields({ name: 'Campus', value: adminData.campus, inline: true });
+      }
+
+      reportEmbed.addFields({ name: 'Roles', value: adminData.roles.join(', '), inline: true });
+
+      if (!outcome.success && outcome.error) {
+        reportEmbed.addFields({ name: 'Error Message', value: `\`\`\`text\n${outcome.error.substring(0, 800)}\n\`\`\`` });
+      }
+
+      // Cleanup files
+      if (fs.existsSync(inputPath)) {
+        try { fs.unlinkSync(inputPath); } catch(e) {}
+      }
+      if (fs.existsSync(outputPath)) {
+        try { fs.unlinkSync(outputPath); } catch(e) {}
+      }
+
+      await interaction.editReply({ embeds: [reportEmbed], files: attachments });
+    });
+  }
+});
+
+// Legacy text-message commands parser fallback (retains support for traditional "!help-tests", etc.)
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
@@ -170,15 +473,10 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // Check channel constraints (only check if message is in a server/guild)
+  // Check channel constraints
   const isDM = !message.guild;
   if (!isDM && CHANNEL_ID && CHANNEL_ID !== 'your_channel_id_here') {
-    if (message.channel.id !== CHANNEL_ID) {
-      if (content.startsWith('!')) {
-        console.log(`❌ Command ignored: Sent in channel ${message.channel.id}, but bot is locked to channel ${CHANNEL_ID}`);
-      }
-      return;
-    }
+    if (message.channel.id !== CHANNEL_ID) return;
   }
 
   // Help command

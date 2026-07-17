@@ -8,6 +8,7 @@
     "shareInst": "npx playwright test tests/gll_shareViaInst.spec.ts --headed",
     "scheduledShare": "npx playwright test tests/gll_scheduledShare.spec.ts --headed",
     "shareDoc": "npx playwright test tests/gll_shareDocumentViaMail.spec.ts --headed",
+    "createAdmin": "npx playwright test tests/createAdmin.spec.ts --headed",
     "bot": "node utils/discordBot.js"
   },
   "keywords": [],
