@@ -21,14 +21,16 @@ export class ShareCredentialModal {
   }
 
   private get shareButton() {
-    return this.page.getByRole('button', { name: 'Share' });
+    return this.page.locator('[data-slot="dialog-content"] button[type="submit"]');
   }
 
   async selectEmailMethod() {
-    // Clicked twice in the original flow — appears needed to force the
-    // email fields to render/reset. Kept as-is; revisit if the UI changes.
-    await this.emailRadio.click();
-    await this.emailRadio.click();
+    // Only click the radio button if it is visible (e.g. some modals like Resumes
+    // do not show the sharing method selection and go straight to the email form).
+    if (await this.emailRadio.isVisible()) {
+      await this.emailRadio.click();
+      await this.emailRadio.click();
+    }
   }
 
   async fillRecipientEmail(email: string) {

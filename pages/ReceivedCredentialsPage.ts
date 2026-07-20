@@ -38,6 +38,7 @@ export class ReceivedCredentialsPage {
   async acknowledgeRow(rowIndex = 0) {
     const actionButton = this.rowActionButton(rowIndex);
     await expect(actionButton).toBeVisible();
+    await expect(actionButton).toBeEnabled();
     await actionButton.click();
   }
 

@@ -94,3 +94,39 @@ export const EXPECTED_SCHEDULED_CREDENTIAL = {
   studentName: required('EXPECTED_SCHEDULED_STUDENT_NAME'),
   senderEmail: required('EXPECTED_SCHEDULED_SENDER_EMAIL'),
 };
+
+// ---------------------------------------------------------------------------
+// FERPA Agreement Signing flow (tests/gll_ferpaAgreement.spec.ts)
+// ---------------------------------------------------------------------------
+
+export const FERPA_TEST_DATA = {
+  hsUnder18NoDual: {
+    username: required('FERPA_HS_UNDER18_NO_DUAL_USERNAME'),
+    password: required('FERPA_HS_UNDER18_NO_DUAL_PASSWORD'),
+    menuLabel: required('FERPA_HS_UNDER18_NO_DUAL_MENU_LABEL'),
+    expectedStudentName: required('EXPECTED_BADGE_STUDENT_NAME'),
+    expectedSenderEmail: required('EXPECTED_BADGE_SENDER_EMAIL'),
+  },
+  hsUnder18WithDual: {
+    username: required('FERPA_HS_UNDER18_WITH_DUAL_USERNAME'),
+    password: required('FERPA_HS_UNDER18_WITH_DUAL_PASSWORD'),
+    menuLabel: required('FERPA_HS_UNDER18_WITH_DUAL_MENU_LABEL'),
+  },
+  otherCollege: {
+    username: required('FERPA_OTHER_COLL_USERNAME'),
+    password: required('FERPA_OTHER_COLL_PASSWORD'),
+    menuLabel: required('FERPA_OTHER_COLL_MENU_LABEL'),
+  },
+};
+
+export const CERTIFICATE_SHARE = {
+  senderAccount: {
+    username: required('CERTIFICATE_SENDER_USERNAME'),
+    password: required('CERTIFICATE_SENDER_PASSWORD'),
+  },
+  accountMenuLabel: required('CERTIFICATE_SENDER_MENU_LABEL'),
+  expectedStudentName: required('EXPECTED_CERTIFICATE_STUDENT_NAME'),
+  expectedSenderEmail: required('EXPECTED_CERTIFICATE_SENDER_EMAIL'),
+};
+
+

@@ -168,7 +168,9 @@ client.once('ready', async () => {
               { name: 'shareEmail', value: 'shareEmail' },
               { name: 'shareInst', value: 'shareInst' },
               { name: 'scheduledShare', value: 'scheduledShare' },
-              { name: 'shareDoc', value: 'shareDoc' }
+              { name: 'shareDoc', value: 'shareDoc' },
+              { name: 'shareBadge', value: 'shareBadge' },
+              { name: 'shareCertificate', value: 'shareCertificate' }
             )),
 
       new SlashCommandBuilder()
@@ -248,11 +250,14 @@ client.on('interactionCreate', async (interaction) => {
   if (commandName === 'run-tests') {
     const testArg = interaction.options.getString('testname');
 
+    // Defer reply immediately to prevent 3-second timeout
+    await interaction.deferReply();
+
     let command = 'npx playwright test';
     let targetDescription = 'all tests';
 
     if (testArg && testArg !== 'all') {
-      const knownScripts = ['shareEmail', 'shareInst', 'scheduledShare', 'shareDoc', 'register', 'debugRegister'];
+      const knownScripts = ['shareEmail', 'shareInst', 'scheduledShare', 'shareDoc', 'shareBadge', 'shareCertificate', 'ferpa', 'register', 'debugRegister'];
       if (knownScripts.includes(testArg)) {
         command = `npm run ${testArg}`;
         targetDescription = `npm script: ${testArg}`;
@@ -269,7 +274,7 @@ client.on('interactionCreate', async (interaction) => {
       .setDescription(`Executing **${targetDescription}** on dev environment...\nCommand: \`${command}\``)
       .setTimestamp();
 
-    await interaction.reply({ embeds: [startEmbed] });
+    await interaction.editReply({ embeds: [startEmbed] });
 
     // Clean test-results folder
     const testResultsDir = path.join(__dirname, '..', 'test-results');
@@ -361,13 +366,16 @@ client.on('interactionCreate', async (interaction) => {
       campus: interaction.options.getString('campus') || ''
     };
 
+    // Defer reply immediately to prevent 3-second timeout
+    await interaction.deferReply();
+
     const startEmbed = new EmbedBuilder()
       .setTitle('⏳ Creating Administrator')
       .setColor('#f1c40f')
       .setDescription(`Starting automation for **${adminData.username}** (${adminData.firstName} ${adminData.lastName})...\nUniversity: *${adminData.university}*${adminData.campus ? `\nCampus: *${adminData.campus}*` : ''}\nRoles: *${adminData.roles.join(', ')}*`)
       .setTimestamp();
 
-    await interaction.reply({ embeds: [startEmbed] });
+    await interaction.editReply({ embeds: [startEmbed] });
 
     // Write input data to admin_input.json
     const inputPath = path.join(__dirname, '..', 'admin_input.json');
@@ -504,7 +512,7 @@ client.on('messageCreate', async (message) => {
 
     // Map known scripts or match spec files
     if (testArg) {
-      const knownScripts = ['shareEmail', 'shareInst', 'scheduledShare', 'shareDoc', 'register', 'debugRegister'];
+      const knownScripts = ['shareEmail', 'shareInst', 'scheduledShare', 'shareDoc', 'shareBadge', 'shareCertificate', 'register', 'debugRegister'];
       if (knownScripts.includes(testArg)) {
         command = `npm run ${testArg}`;
         targetDescription = `npm script: ${testArg}`;
@@ -714,3 +722,16 @@ if (BOT_TOKEN && BOT_TOKEN !== 'your_bot_token_here') {
 } else {
   console.warn('DISCORD_BOT_TOKEN is not configured in .env. Discord bot will not start.');
 }
+
+// Safety Event Listeners to prevent process crashes on network/interaction timeouts
+client.on('error', error => {
+  console.error('Discord Client Error:', error);
+});
+
+process.on('unhandledRejection', error => {
+  console.error('Unhandled promise rejection:', error);
+});
+
+process.on('uncaughtException', error => {
+  console.error('Uncaught exception:', error);
+});

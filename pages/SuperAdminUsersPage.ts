@@ -126,10 +126,8 @@ export class SuperAdminUsersPage extends BasePage {
         const normalized = role.toLowerCase().trim();
         const mappedRoleName = roleMap[normalized] || role;
 
-        // Find checkbox label text inside the active dialog overlay specifically
-        const optionLocator = this.page.getByRole('dialog').getByText(mappedRoleName, { exact: true }).or(
-          this.page.getByRole('option', { name: mappedRoleName })
-        ).or(
+        // Find checkbox label text globally or as role option (no dialog role constraint)
+        const optionLocator = this.page.getByRole('option', { name: mappedRoleName }).or(
           this.page.getByText(mappedRoleName, { exact: true })
         );
         await optionLocator.first().click();
@@ -157,49 +155,36 @@ export class SuperAdminUsersPage extends BasePage {
       const cleanUniversity = data.university.replace(/^["']|["']$/g, '').trim();
 
       // Check if the search input box is visible before typing in it
-      const searchInput = this.page.getByRole('dialog').getByRole('textbox').first();
+      const searchInput = this.page.getByRole('textbox', { name: /Search/i }).first();
       if (await searchInput.isVisible().catch(() => false)) {
         await searchInput.fill(cleanUniversity);
         // Wait for input debounce and loading state to trigger
         await this.page.waitForTimeout(1000);
         // Wait for any dynamic loading state to settle
-        await expect(this.page.getByRole('dialog').getByText('Loading...')).toBeHidden({ timeout: 8000 }).catch(() => { });
-        await this.page.getByRole('dialog').locator('button').first().waitFor({ state: 'visible', timeout: 4000 }).catch(() => { });
+        await expect(this.page.getByText('Loading...')).toBeHidden({ timeout: 8000 }).catch(() => { });
       }
       const escapeRegex = (str: string) => str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
       const exactRegexPattern = '^\\s*' + escapeRegex(cleanUniversity).replace(/\s+/g, '\\s+') + '\\s*$';
       const exactRegex = new RegExp(exactRegexPattern, 'i');
 
-      // Locate all buttons in the active dialog
-      const buttons = this.page.getByRole('dialog').locator('button');
+      // Check for popover/dropdown overlay container first
+      const popper = this.page.locator('[role="listbox"], [role="presentation"], .MuiAutocomplete-popper, .MuiPopover-root, [class*="popper"], [class*="popover"]').first();
+      const optionScope = (await popper.count() > 0 && await popper.isVisible()) ? popper : this.page;
 
-      // Find the one that has a span with the exact text
-      let targetButton = buttons.filter({
-        has: this.page.locator('span.truncate, span').filter({ hasText: exactRegex })
-      }).first();
+      const targetOption = optionScope.getByRole('option', { name: exactRegex }).or(
+        optionScope.getByRole('button', { name: exactRegex })
+      ).or(
+        optionScope.getByText(exactRegex)
+      ).first();
 
-      // Fallback to searching button text directly with the exact regex
-      if (await targetButton.count() === 0) {
-        targetButton = buttons.filter({ hasText: exactRegex }).first();
-      }
-
-      if (await targetButton.count() === 0) {
-        const availableOptions: string[] = [];
-        const count = await buttons.count();
-        for (let i = 0; i < count; i++) {
-          const txt = await buttons.nth(i).textContent().catch(() => '');
-          if (txt) {
-            const cleaned = txt.trim().replace(/\s+/g, ' ');
-            if (cleaned) availableOptions.push(cleaned);
-          }
-        }
+      if (await targetOption.count() === 0) {
         return {
           success: false,
-          error: `Could not find exact university matching "${cleanUniversity}". Found options: [${availableOptions.join(', ')}]`
+          error: `Could not find exact university matching "${cleanUniversity}".`
         };
       }
 
-      await targetButton.click();
+      await targetOption.click();
 
       // 5. Select Campus (only Counselor role requires campus selection, and if campuses exist)
       if (isCounselor && data.campus) {
@@ -212,7 +197,7 @@ export class SuperAdminUsersPage extends BasePage {
 
           const campusesToSelect = cleanCampus.split(',').map(c => c.trim()).filter(Boolean);
           for (const campus of campusesToSelect) {
-            const campusSearchInput = this.page.getByRole('dialog').getByRole('textbox').first();
+            const campusSearchInput = this.page.getByRole('textbox', { name: /Search/i }).first();
 
             if (campus.toLowerCase() === 'all' || campus.toLowerCase() === 'select all') {
               await this.page.getByText('Select All', { exact: true }).first().click();
@@ -223,35 +208,28 @@ export class SuperAdminUsersPage extends BasePage {
                 // Wait for input debounce and loading state to trigger
                 await this.page.waitForTimeout(1000);
                 // Wait for loading indicator to settle
-                await expect(this.page.getByRole('dialog').getByText('Loading...')).toBeHidden({ timeout: 5000 }).catch(() => { });
+                await expect(this.page.getByText('Loading...')).toBeHidden({ timeout: 5000 }).catch(() => { });
               }
 
               const campusRegexPattern = '^\\s*' + escapeRegex(campus).replace(/\s+/g, '\\s+') + '\\s*$';
               const campusRegex = new RegExp(campusRegexPattern, 'i');
 
-              const campusOption = this.page.getByRole('dialog').locator('label').filter({
-                hasText: campusRegex
-              }).or(
-                this.page.getByText(campus, { exact: true })
-              );
+              const campusPopper = this.page.locator('[role="listbox"], [role="presentation"], .MuiAutocomplete-popper, .MuiPopover-root, [class*="popper"], [class*="popover"]').first();
+              const campusScope = (await campusPopper.count() > 0 && await campusPopper.isVisible()) ? campusPopper : this.page;
+
+              const campusOption = campusScope.getByRole('option', { name: campusRegex }).or(
+                campusScope.locator('label').filter({ hasText: campusRegex })
+              ).or(
+                campusScope.getByText(campus, { exact: true })
+              ).first();
 
               if (await campusOption.count() === 0) {
-                const availableCampuses: string[] = [];
-                const labels = this.page.getByRole('dialog').locator('label');
-                const lCount = await labels.count();
-                for (let j = 0; j < lCount; j++) {
-                  const txt = await labels.nth(j).textContent().catch(() => '');
-                  if (txt) {
-                    const cleaned = txt.trim().replace(/\s+/g, ' ');
-                    if (cleaned) availableCampuses.push(cleaned);
-                  }
-                }
                 return {
                   success: false,
-                  error: `Could not find exact campus matching "${campus}". Found options: [${availableCampuses.join(', ')}]`
+                  error: `Could not find exact campus matching "${campus}".`
                 };
               }
-              await campusOption.first().click();
+              await campusOption.click();
             }
           }
           await this.page.keyboard.press('Escape');

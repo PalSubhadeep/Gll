@@ -12,7 +12,7 @@ export class ShareInstitutionModal {
   }
 
   private get shareButton() {
-    return this.page.getByRole('button', { name: 'Share' });
+    return this.page.locator('[data-slot="dialog-content"] button[type="submit"]');
   }
 
   async searchInstitution(query: string) {
@@ -21,7 +21,7 @@ export class ShareInstitutionModal {
   }
 
   async selectInstitutionResult(institutionName: string) {
-    await this.page.getByText(institutionName, { exact: true }).click();
+    await this.page.locator('.max-h-60').getByText(institutionName, { exact: true }).click();
   }
 
   async submit() {
@@ -32,6 +32,7 @@ export class ShareInstitutionModal {
   async shareToInstitution(searchQuery: string, institutionName: string) {
     await this.searchInstitution(searchQuery);
     await this.selectInstitutionResult(institutionName);
+    await this.page.waitForTimeout(1000);
     await this.submit();
   }
 }
