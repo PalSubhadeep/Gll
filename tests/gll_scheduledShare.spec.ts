@@ -12,6 +12,7 @@ import {
 } from '../fixtures/testData';
 
 // Shared between the two serial tests, same pattern as the original script.
+let shareExecutionTime: Date;
 let scheduledTime: Date;
 let offsetMinutesUsed: number;
 
@@ -37,10 +38,17 @@ test.describe.serial('gll_scheduledShare', () => {
     const resolved = resolveScheduledTime();
     offsetMinutesUsed = resolved.offsetMinutes;
 
+    shareExecutionTime = new Date();
     scheduledTime = await scheduleModal.scheduleFor(resolved.scheduledTime);
     await dashboard.instituteShareModal.submit();
 
-    console.log('Share scheduled for:', scheduledTime.toLocaleString());
+    console.log('\n=============================================');
+    console.log('         SCHEDULED SHARE TIMING DETAILS      ');
+    console.log('=============================================');
+    console.log('Shared Time (Executed At) : ', shareExecutionTime.toLocaleString());
+    console.log('Expected Delivery Time    : ', scheduledTime.toLocaleString());
+    console.log(`Offset Configured         : ${offsetMinutesUsed} minutes`);
+    console.log('=============================================\n');
 
     await expect(page.getByRole('listitem')).toContainText('Credential sharing scheduled successfully');
     await dashboard.closeToast();
@@ -64,13 +72,20 @@ test.describe.serial('gll_scheduledShare', () => {
     );
     await receivedCredentials.open();
 
-    console.log('Checking before schedule:', new Date().toLocaleString());
+    console.log('\n=============================================');
+    console.log('         CHECKING SCHEDULED DELIVERY         ');
+    console.log('=============================================');
+    console.log('Shared Time (Executed At) : ', shareExecutionTime ? shareExecutionTime.toLocaleString() : 'N/A');
+    console.log('Expected Delivery Time    : ', scheduledTime ? scheduledTime.toLocaleString() : 'N/A');
+    console.log('Current Check Time        : ', new Date().toLocaleString());
+    console.log('=============================================\n');
+
     await receivedCredentials.expectTableNotContains(EXPECTED_SCHEDULED_CREDENTIAL.senderEmail);
     console.log('Credential not received before scheduled time - correct');
 
     const remainingMs = scheduledTime.getTime() - Date.now();
     if (remainingMs > 0) {
-      console.log(`Waiting ${Math.round(remainingMs / 1000)}s until scheduled time`);
+      console.log(`Waiting ${Math.round(remainingMs / 1000)}s until scheduled time (${scheduledTime.toLocaleString()})`);
       await page.waitForTimeout(remainingMs);
     }
     console.log('Checking after schedule:', new Date().toLocaleString());

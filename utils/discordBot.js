@@ -84,6 +84,60 @@ function resolveEnvironment(envInput) {
   return { envName: 'DEV (Default)', baseUrl: 'https://lockerdev.glcredentials.com/' };
 }
 
+// Helper to extract and attach scheduled share timing details to Discord embed if present
+function attachScheduledShareTimingField(reportEmbed, output) {
+  const sharedTimeMatch = output.match(/Shared Time \(Executed At\)\s*:\s*([^\r\n]+)/i);
+  const expectedDeliveryMatch = output.match(/Expected Delivery Time\s*:\s*([^\r\n]+)/i);
+
+  if (sharedTimeMatch || expectedDeliveryMatch) {
+    const sharedTimeStr = sharedTimeMatch ? sharedTimeMatch[1].trim() : 'N/A';
+    const expectedDeliveryStr = expectedDeliveryMatch ? expectedDeliveryMatch[1].trim() : 'N/A';
+    reportEmbed.addFields({
+      name: '⏰ Scheduled Share Timing Details',
+      value: `• **Shared Time (Executed At)**: \`${sharedTimeStr}\`\n• **Expected Delivery Time**: \`${expectedDeliveryStr}\``,
+      inline: false
+    });
+  }
+}
+
+// Helper to calculate scheduled share timing for initial start embed
+function getScheduledShareTimingSummary(testArg) {
+  const isScheduledTest = !testArg || testArg === 'all' || testArg === 'scheduledShare' || testArg.includes('scheduledShare');
+  if (!isScheduledTest) return null;
+
+  try {
+    const executedAt = new Date();
+    const explicit = process.env.SCHEDULE_AT;
+    let targetTime;
+    let offsetMinutes = parseInt(process.env.SCHEDULE_OFFSET_MINUTES || '10', 10);
+    if (isNaN(offsetMinutes) || offsetMinutes <= 0) offsetMinutes = 10;
+
+    if (explicit) {
+      targetTime = new Date(explicit);
+      if (isNaN(targetTime.getTime())) targetTime = new Date(executedAt.getTime() + offsetMinutes * 60000);
+    } else {
+      targetTime = new Date(executedAt.getTime() + offsetMinutes * 60000);
+    }
+
+    // Snap to nearest 10-minute step (matching ScheduleShareModal behavior)
+    const snapped = new Date(targetTime);
+    const rounded = Math.round(targetTime.getMinutes() / 10) * 10;
+    if (rounded === 60) {
+      snapped.setHours(snapped.getHours() + 1, 0, 0, 0);
+    } else {
+      snapped.setMinutes(rounded, 0, 0);
+    }
+
+    return {
+      sharedTime: executedAt.toLocaleString(),
+      expectedDeliveryTime: snapped.toLocaleString(),
+      offsetMinutes: offsetMinutes
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 // Helper to parse create-admin arguments
 function parseCreateAdminArgs(content) {
   const argsString = content.substring('!create-admin'.length).trim();
@@ -316,6 +370,15 @@ client.on('interactionCreate', async (interaction) => {
       .setDescription(`Executing **${targetDescription}**...\nTarget Environment: **${envDisplay}**\nCommand: \`${command}\``)
       .setTimestamp();
 
+    const timingSummary = getScheduledShareTimingSummary(testArg);
+    if (timingSummary) {
+      startEmbed.addFields({
+        name: '⏰ Scheduled Share Timing Information',
+        value: `• **Shared Time (Executed At)**: \`${timingSummary.sharedTime}\`\n• **Expected Delivery Time**: \`${timingSummary.expectedDeliveryTime}\` *(+${timingSummary.offsetMinutes} mins, snapped)*`,
+        inline: false
+      });
+    }
+
     await interaction.editReply({ embeds: [startEmbed] });
 
     // Clean test-results folder
@@ -381,6 +444,8 @@ client.on('interactionCreate', async (interaction) => {
       if (failureDetails) {
         reportEmbed.addFields({ name: 'Failure Details (first few lines)', value: failureDetails });
       }
+
+      attachScheduledShareTimingField(reportEmbed, output);
 
       if (output.length > 1024) {
         const logPath = path.join(__dirname, '..', 'test-run.log');
@@ -603,6 +668,15 @@ client.on('messageCreate', async (message) => {
       .setDescription(`Executing **${targetDescription}**...\nTarget Environment: **${envDisplay}**\nCommand: \`${command}\``)
       .setTimestamp();
 
+    const timingSummary = getScheduledShareTimingSummary(testArg);
+    if (timingSummary) {
+      startEmbed.addFields({
+        name: '⏰ Scheduled Share Timing Information',
+        value: `• **Shared Time (Executed At)**: \`${timingSummary.sharedTime}\`\n• **Expected Delivery Time**: \`${timingSummary.expectedDeliveryTime}\` *(+${timingSummary.offsetMinutes} mins, snapped)*`,
+        inline: false
+      });
+    }
+
     const statusMessage = await message.channel.send({ embeds: [startEmbed] });
 
     // Clean test-results folder before running tests
@@ -668,6 +742,8 @@ client.on('messageCreate', async (message) => {
       if (failureDetails) {
         reportEmbed.addFields({ name: 'Failure Details (first few lines)', value: failureDetails });
       }
+
+      attachScheduledShareTimingField(reportEmbed, output);
 
       // If output is too long, attach as a file, otherwise post inline
       if (output.length > 1024) {
