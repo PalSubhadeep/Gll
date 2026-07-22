@@ -63,6 +63,27 @@ function stripQuotes(str) {
   return val;
 }
 
+// Helper to resolve environment URL from user input (defaults to DEV if not specified)
+function resolveEnvironment(envInput) {
+  if (!envInput) {
+    return { envName: 'DEV (Default)', baseUrl: 'https://lockerdev.glcredentials.com/' };
+  }
+  const val = envInput.trim().toLowerCase();
+  if (val === 'uat' || val === 'https://lockeruat.glcredentials.com' || val === 'https://lockeruat.glcredentials.com/') {
+    return { envName: 'UAT', baseUrl: 'https://lockeruat.glcredentials.com/' };
+  }
+  if (val === 'dev' || val === 'https://lockerdev.glcredentials.com' || val === 'https://lockerdev.glcredentials.com/') {
+    return { envName: 'DEV', baseUrl: 'https://lockerdev.glcredentials.com/' };
+  }
+  if (val === 'demo' || val === 'lockerdemo' || val === 'https://lockerdemo.glcredentials.com' || val === 'https://lockerdemo.glcredentials.com/') {
+    return { envName: 'DEMO', baseUrl: 'https://lockerdemo.glcredentials.com/' };
+  }
+  if (val.startsWith('http://') || val.startsWith('https://')) {
+    return { envName: 'CUSTOM', baseUrl: val.endsWith('/') ? val : `${val}/` };
+  }
+  return { envName: 'DEV (Default)', baseUrl: 'https://lockerdev.glcredentials.com/' };
+}
+
 // Helper to parse create-admin arguments
 function parseCreateAdminArgs(content) {
   const argsString = content.substring('!create-admin'.length).trim();
@@ -171,6 +192,15 @@ client.once('ready', async () => {
               { name: 'shareDoc', value: 'shareDoc' },
               { name: 'shareBadge', value: 'shareBadge' },
               { name: 'shareCertificate', value: 'shareCertificate' }
+            ))
+        .addStringOption(option =>
+          option.setName('env')
+            .setDescription('Target environment (optional, defaults to DEV)')
+            .setRequired(false)
+            .addChoices(
+              { name: 'UAT (https://lockeruat.glcredentials.com)', value: 'uat' },
+              { name: 'DEV (https://lockerdev.glcredentials.com)', value: 'dev' },
+              { name: 'DEMO (https://lockerdemo.glcredentials.com)', value: 'demo' }
             )),
 
       new SlashCommandBuilder()
@@ -204,6 +234,15 @@ client.once('ready', async () => {
           option.setName('campus')
             .setDescription('Campus name (optional)')
             .setRequired(false))
+        .addStringOption(option =>
+          option.setName('env')
+            .setDescription('Target environment (optional, defaults to DEV)')
+            .setRequired(false)
+            .addChoices(
+              { name: 'UAT (https://lockeruat.glcredentials.com)', value: 'uat' },
+              { name: 'DEV (https://lockerdev.glcredentials.com)', value: 'dev' },
+              { name: 'DEMO (https://lockerdemo.glcredentials.com)', value: 'demo' }
+            ))
     ].map(command => command.toJSON());
 
     console.log('Started refreshing application (/) commands.');
@@ -240,8 +279,8 @@ client.on('interactionCreate', async (interaction) => {
       .setColor('#3498db')
       .setDescription('Run Playwright tests or trigger admin creation directly from Discord.')
       .addFields(
-        { name: '`/run-tests`', value: 'Runs all or specific Playwright tests (headless).' },
-        { name: '`/create-admin`', value: 'Creates a new Administrator account using native form fields.' }
+        { name: '`/run-tests`', value: 'Runs all or specific Playwright tests. Optionally specify `env` (`uat` or `dev`).' },
+        { name: '`/create-admin`', value: 'Creates a new Administrator account. Optionally specify `env` (`uat` or `dev`).' }
       );
     return interaction.reply({ embeds: [helpEmbed] });
   }
@@ -249,6 +288,9 @@ client.on('interactionCreate', async (interaction) => {
   // run-tests command
   if (commandName === 'run-tests') {
     const testArg = interaction.options.getString('testname');
+    const envOption = interaction.options.getString('env');
+    const resolvedEnv = resolveEnvironment(envOption);
+    const envDisplay = resolvedEnv.envName ? `${resolvedEnv.envName} (${resolvedEnv.baseUrl})` : `Default (${process.env.BASE_URL || 'from .env'})`;
 
     // Defer reply immediately to prevent 3-second timeout
     await interaction.deferReply();
@@ -271,7 +313,7 @@ client.on('interactionCreate', async (interaction) => {
     const startEmbed = new EmbedBuilder()
       .setTitle('⏳ Playwright Execution Started')
       .setColor('#f1c40f')
-      .setDescription(`Executing **${targetDescription}** on dev environment...\nCommand: \`${command}\``)
+      .setDescription(`Executing **${targetDescription}**...\nTarget Environment: **${envDisplay}**\nCommand: \`${command}\``)
       .setTimestamp();
 
     await interaction.editReply({ embeds: [startEmbed] });
@@ -280,8 +322,13 @@ client.on('interactionCreate', async (interaction) => {
     const testResultsDir = path.join(__dirname, '..', 'test-results');
     cleanDirectory(testResultsDir);
 
+    const execEnv = { ...process.env };
+    if (resolvedEnv.baseUrl) {
+      execEnv.BASE_URL = resolvedEnv.baseUrl;
+    }
+
     // Execute the tests
-    exec(command, { cwd: path.join(__dirname, '..') }, async (error, stdout, stderr) => {
+    exec(command, { cwd: path.join(__dirname, '..'), env: execEnv }, async (error, stdout, stderr) => {
       const output = stdout + '\n' + stderr;
       console.log(output);
 
@@ -324,7 +371,7 @@ client.on('interactionCreate', async (interaction) => {
       const reportEmbed = new EmbedBuilder()
         .setTitle(resultTitle)
         .setColor(resultColor)
-        .setDescription(`Completed running **${targetDescription}**`)
+        .setDescription(`Completed running **${targetDescription}** on **${envDisplay}**`)
         .addFields(
           { name: 'Summary', value: `✅ Passed: **${passedCount}**\n❌ Failed: **${failedCount}**\n⚠️ Flaky: **${flakyCount}**\n⏭️ Skipped: **${skippedCount}**`, inline: true },
           { name: 'Duration', value: `⏱️ ${duration}`, inline: true }
@@ -356,6 +403,10 @@ client.on('interactionCreate', async (interaction) => {
 
   // create-admin command
   if (commandName === 'create-admin') {
+    const envOption = interaction.options.getString('env');
+    const resolvedEnv = resolveEnvironment(envOption);
+    const envDisplay = resolvedEnv.envName ? `${resolvedEnv.envName} (${resolvedEnv.baseUrl})` : `Default (${process.env.BASE_URL || 'from .env'})`;
+
     const adminData = {
       username: interaction.options.getString('username'),
       firstName: interaction.options.getString('firstname'),
@@ -372,7 +423,7 @@ client.on('interactionCreate', async (interaction) => {
     const startEmbed = new EmbedBuilder()
       .setTitle('⏳ Creating Administrator')
       .setColor('#f1c40f')
-      .setDescription(`Starting automation for **${adminData.username}** (${adminData.firstName} ${adminData.lastName})...\nUniversity: *${adminData.university}*${adminData.campus ? `\nCampus: *${adminData.campus}*` : ''}\nRoles: *${adminData.roles.join(', ')}*`)
+      .setDescription(`Starting automation for **${adminData.username}** (${adminData.firstName} ${adminData.lastName})...\nTarget Environment: **${envDisplay}**\nUniversity: *${adminData.university}*${adminData.campus ? `\nCampus: *${adminData.campus}*` : ''}\nRoles: *${adminData.roles.join(', ')}*`)
       .setTimestamp();
 
     await interaction.editReply({ embeds: [startEmbed] });
@@ -397,8 +448,13 @@ client.on('interactionCreate', async (interaction) => {
 
     const command = 'npx playwright test tests/createAdmin.spec.ts --headed';
 
+    const execEnv = { ...process.env };
+    if (resolvedEnv.baseUrl) {
+      execEnv.BASE_URL = resolvedEnv.baseUrl;
+    }
+
     // Execute test
-    exec(command, { cwd: path.join(__dirname, '..') }, async (error, stdout, stderr) => {
+    exec(command, { cwd: path.join(__dirname, '..'), env: execEnv }, async (error, stdout, stderr) => {
       const output = stdout + '\n' + stderr;
       console.log(output);
 
@@ -494,24 +550,42 @@ client.on('messageCreate', async (message) => {
       .setColor('#3498db')
       .setDescription('Run Playwright tests or trigger admin creation directly from Discord.')
       .addFields(
-        { name: '`!run-tests`', value: 'Runs all Playwright tests (headless).' },
-        { name: '`!run-tests <script>`', value: 'Runs a specific script from package.json (e.g. `!run-tests register`, `!run-tests shareEmail`).' },
-        { name: '`!run-tests <spec-name>`', value: 'Runs a specific spec file (e.g. `!run-tests registration`).' },
-        { name: '`!create-admin <args>`', value: 'Creates a new Administrator account.\n*Formats supported:*\n1. Positional: `!create-admin username FirstName LastName email@test.com "University Name" Role1,Role2`\n2. Key-value: `!create-admin username=usr firstname=fn lastname=ln email=em university="Univ" roles=Role1,Role2`' }
+        { name: '`!run-tests`', value: 'Runs all Playwright tests. Add optional environment: `--env=uat`, `--env=dev`, `--env=demo` (defaults to DEV).' },
+        { name: '`!run-tests <script>`', value: 'Runs a specific script from package.json (e.g. `!run-tests shareEmail --env=demo`).' },
+        { name: '`!run-tests <spec-name>`', value: 'Runs a specific spec file (e.g. `!run-tests registration demo`).' },
+        { name: '`!create-admin <args>`', value: 'Creates a new Administrator account (supports optional `--env=uat`, `--env=dev`, or `--env=demo`).\n*Formats supported:*\n1. Positional: `!create-admin username FirstName LastName email@test.com "University Name" Role1,Role2 --env=demo`\n2. Key-value: `!create-admin username=usr firstname=fn lastname=ln email=em university="Univ" roles=Role1,Role2 env=demo`' }
       );
     return message.channel.send({ embeds: [helpEmbed] });
   }
 
   // Run tests command
   if (content.startsWith('!run-tests')) {
-    const args = content.split(' ').slice(1);
-    const testArg = args[0] ? args[0].trim() : null;
+    const rawArgs = content.split(' ').slice(1);
+    let testArg = null;
+    let envArg = null;
+
+    for (const arg of rawArgs) {
+      const trimmed = arg.trim();
+      if (!trimmed) continue;
+      if (trimmed.toLowerCase().startsWith('--env=')) {
+        envArg = trimmed.substring(6);
+      } else if (trimmed.toLowerCase().startsWith('env=')) {
+        envArg = trimmed.substring(4);
+      } else if (['uat', 'dev', 'demo', 'lockerdemo'].includes(trimmed.toLowerCase())) {
+        envArg = trimmed;
+      } else if (!testArg) {
+        testArg = trimmed;
+      }
+    }
+
+    const resolvedEnv = resolveEnvironment(envArg);
+    const envDisplay = resolvedEnv.envName ? `${resolvedEnv.envName} (${resolvedEnv.baseUrl})` : `Default (${process.env.BASE_URL || 'from .env'})`;
 
     let command = 'npx playwright test';
     let targetDescription = 'all tests';
 
     // Map known scripts or match spec files
-    if (testArg) {
+    if (testArg && testArg !== 'all') {
       const knownScripts = ['shareEmail', 'shareInst', 'scheduledShare', 'shareDoc', 'shareBadge', 'shareCertificate', 'register', 'debugRegister'];
       if (knownScripts.includes(testArg)) {
         command = `npm run ${testArg}`;
@@ -526,7 +600,7 @@ client.on('messageCreate', async (message) => {
     const startEmbed = new EmbedBuilder()
       .setTitle('🚀 Running Playwright Tests')
       .setColor('#f1c40f')
-      .setDescription(`Executing **${targetDescription}**...\nCommand: \`${command}\``)
+      .setDescription(`Executing **${targetDescription}**...\nTarget Environment: **${envDisplay}**\nCommand: \`${command}\``)
       .setTimestamp();
 
     const statusMessage = await message.channel.send({ embeds: [startEmbed] });
@@ -535,8 +609,13 @@ client.on('messageCreate', async (message) => {
     const testResultsDir = path.join(__dirname, '..', 'test-results');
     cleanDirectory(testResultsDir);
 
+    const execEnv = { ...process.env };
+    if (resolvedEnv.baseUrl) {
+      execEnv.BASE_URL = resolvedEnv.baseUrl;
+    }
+
     // Execute the tests
-    exec(command, { cwd: path.join(__dirname, '..') }, async (error, stdout, stderr) => {
+    exec(command, { cwd: path.join(__dirname, '..'), env: execEnv }, async (error, stdout, stderr) => {
       const output = stdout + '\n' + stderr;
       console.log(output);
 
@@ -579,7 +658,7 @@ client.on('messageCreate', async (message) => {
       const reportEmbed = new EmbedBuilder()
         .setTitle(resultTitle)
         .setColor(resultColor)
-        .setDescription(`Completed running **${targetDescription}**`)
+        .setDescription(`Completed running **${targetDescription}** on **${envDisplay}**`)
         .addFields(
           { name: 'Summary', value: `✅ Passed: **${passedCount}**\n❌ Failed: **${failedCount}**\n⚠️ Flaky: **${flakyCount}**\n⏭️ Skipped: **${skippedCount}**`, inline: true },
           { name: 'Duration', value: `⏱️ ${duration}`, inline: true }
@@ -612,7 +691,17 @@ client.on('messageCreate', async (message) => {
 
   // Create admin command
   if (content.startsWith('!create-admin')) {
-    const adminData = parseCreateAdminArgs(content);
+    let envArg = null;
+    let cleanContent = content;
+    const envMatch = content.match(/--(?:env)=([^\s]+)|env=([^\s]+)/i);
+    if (envMatch) {
+      envArg = envMatch[1] || envMatch[2];
+      cleanContent = content.replace(envMatch[0], '').trim();
+    }
+    const resolvedEnv = resolveEnvironment(envArg);
+    const envDisplay = resolvedEnv.envName ? `${resolvedEnv.envName} (${resolvedEnv.baseUrl})` : `Default (${process.env.BASE_URL || 'from .env'})`;
+
+    const adminData = parseCreateAdminArgs(cleanContent);
     if (!adminData) {
       const errorEmbed = new EmbedBuilder()
         .setTitle('❌ Invalid Command Format')
@@ -628,7 +717,7 @@ client.on('messageCreate', async (message) => {
     const startEmbed = new EmbedBuilder()
       .setTitle('⏳ Creating Administrator')
       .setColor('#f1c40f')
-      .setDescription(`Starting automation for **${adminData.username}** (${adminData.firstName} ${adminData.lastName})...\nUniversity: *${adminData.university}*${adminData.campus ? `\nCampus: *${adminData.campus}*` : ''}\nRoles: *${adminData.roles.join(', ')}*`)
+      .setDescription(`Starting automation for **${adminData.username}** (${adminData.firstName} ${adminData.lastName})...\nTarget Environment: **${envDisplay}**\nUniversity: *${adminData.university}*${adminData.campus ? `\nCampus: *${adminData.campus}*` : ''}\nRoles: *${adminData.roles.join(', ')}*`)
       .setTimestamp();
 
     const statusMessage = await message.channel.send({ embeds: [startEmbed] });
@@ -653,8 +742,13 @@ client.on('messageCreate', async (message) => {
 
     const command = 'npx playwright test tests/createAdmin.spec.ts --headed';
 
+    const execEnv = { ...process.env };
+    if (resolvedEnv.baseUrl) {
+      execEnv.BASE_URL = resolvedEnv.baseUrl;
+    }
+
     // 3. Execute test
-    exec(command, { cwd: path.join(__dirname, '..') }, async (error, stdout, stderr) => {
+    exec(command, { cwd: path.join(__dirname, '..'), env: execEnv }, async (error, stdout, stderr) => {
       const output = stdout + '\n' + stderr;
       console.log(output);
 

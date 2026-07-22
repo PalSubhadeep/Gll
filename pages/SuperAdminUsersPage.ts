@@ -80,7 +80,7 @@ export class SuperAdminUsersPage extends BasePage {
   // Helper Methods
 
   async open() {
-    await this.goto('https://lockerdev.glcredentials.com/');
+    await this.goto(process.env.BASE_URL || 'https://lockeruat.glcredentials.com/');
   }
 
   async login(username: string, password: string) {

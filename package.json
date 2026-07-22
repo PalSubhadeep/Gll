@@ -11,7 +11,9 @@
     "shareBadge": "npx playwright test tests/gll_shareBadge.spec.ts --headed",
     "shareCertificate": "npx playwright test tests/gll_shareCertificate.spec.ts --headed",
     "createAdmin": "npx playwright test tests/createAdmin.spec.ts --headed",
-    "ferpa": "npx playwright test tests/gll_ferpaAgreement.spec.ts --headed",
+    "test:dev": "node -e \"process.env.ENV='dev'; require('child_process').execSync('npx playwright test', {stdio:'inherit'})\"",
+    "test:uat": "node -e \"process.env.ENV='uat'; require('child_process').execSync('npx playwright test', {stdio:'inherit'})\"",
+    "test:demo": "node -e \"process.env.ENV='demo'; require('child_process').execSync('npx playwright test', {stdio:'inherit'})\"",
     "bot": "node utils/discordBot.js"
   },
   "keywords": [],

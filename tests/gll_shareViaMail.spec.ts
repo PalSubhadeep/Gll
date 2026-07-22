@@ -57,8 +57,8 @@ test('share transcript via email and verify delivery via IMAP', async ({ page })
   expect(links.verifyUrl, 'Verify-credentials link should be present').not.toBeNull();
   expect(links.trackId, 'trackId GUID should be extractable').not.toBeNull();
 
-  expect(links.downloadUrl).toContain('lockerdev.glcredentials.com/report/api/share-credentials/view/');
-  expect(links.verifyUrl).toContain('lockerdev.glcredentials.com/verify-credentials');
+  expect(links.downloadUrl).toContain('.glcredentials.com/report/api/share-credentials/view/');
+  expect(links.verifyUrl).toContain('.glcredentials.com/verify-credentials');
   expect(links.verifyUrl).toContain(`trackId=${links.trackId}`);
 
   // --- Optional: confirm the download link actually resolves ---

@@ -9,9 +9,30 @@ declare const process: any;
  * Read environment variables from file.
  * https://github.com/motdotla/dotenv
  */
-// import dotenv from 'dotenv';
-// import path from 'path';
-// dotenv.config({ path: path.resolve(__dirname, '.env') });
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+
+/**
+ * Determine target environment from CLI args (--env=uat|dev|demo), process.env.ENV, or fallback to 'dev'
+ */
+function resolveSelectedEnv(): string {
+  if (process.env.ENV) return process.env.ENV.toLowerCase();
+  if (process.env.TEST_ENV) return process.env.TEST_ENV.toLowerCase();
+  const envArg = process.argv.find(arg => arg.toLowerCase().startsWith('--env='));
+  if (envArg) return envArg.split('=')[1].toLowerCase();
+  return 'dev';
+}
+
+const selectedEnv = resolveSelectedEnv();
+const envFileName = `.env.${selectedEnv}`;
+const envFilePath = path.resolve(__dirname, envFileName);
+
+if (fs.existsSync(envFilePath)) {
+  dotenv.config({ path: envFilePath, override: !process.env.BASE_URL });
+} else {
+  dotenv.config({ path: path.resolve(__dirname, '.env') });
+}
 
 /**
  * See https://playwright.dev/docs/test-configuration.
@@ -31,7 +52,7 @@ export default defineConfig({
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('')`. */
-    // baseURL: 'http://localhost:3000',
+    baseURL: process.env.BASE_URL || 'https://lockerdev.glcredentials.com/',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',

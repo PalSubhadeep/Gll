@@ -7,6 +7,9 @@ node_modules/
 /playwright/.cache/
 /playwright/.auth/
 .env
+.env.demo
+.env.dev
+.env.uat
 /debug
 logs/
 allure-results

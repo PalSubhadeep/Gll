@@ -44,11 +44,11 @@ export interface ShareLinks {
 export function extractShareLinks(body: string): ShareLinks {
   const downloadMatches = [
     ...body.matchAll(
-      /https:\/\/lockerdev\.glcredentials\.com\/report\/api\/share-credentials\/view\/([a-f0-9-]{36})/gi
+      /https:\/\/[a-z0-9-]+\.glcredentials\.com\/report\/api\/share-credentials\/view\/([a-f0-9-]{36})/gi
     ),
   ];
   const verifyMatch = body.match(
-    /https:\/\/lockerdev\.glcredentials\.com\/verify-credentials\?[^\s"'<)]+/i
+    /https:\/\/[a-z0-9-]+\.glcredentials\.com\/verify-credentials\?[^\s"'<)]+/i
   );
 
   const downloadUrl = downloadMatches[0]?.[0] ?? null;
