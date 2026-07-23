@@ -24,14 +24,34 @@ function resolveSelectedEnv(): string {
   return 'dev';
 }
 
+import child_process from 'child_process';
+
 const selectedEnv = resolveSelectedEnv();
 const envFileName = `.env.${selectedEnv}`;
 const envFilePath = path.resolve(__dirname, envFileName);
 
+// 1. Load primary .env for MONGODB_URI
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 if (fs.existsSync(envFilePath)) {
-  dotenv.config({ path: envFilePath, override: !process.env.BASE_URL });
-} else {
-  dotenv.config({ path: path.resolve(__dirname, '.env') });
+  dotenv.config({ path: envFilePath });
+}
+
+// 2. If MONGODB_URI is available, fetch latest variables from MongoDB Atlas for the selected environment
+if (process.env.MONGODB_URI) {
+  try {
+    const fetchCmd = `node -e "require('./utils/mongoEnvLoader').getEnvFromMongo('${selectedEnv}').then(v => console.log(JSON.stringify(v || {}))).catch(()=>console.log('{}'))"`;
+    const output = child_process.execSync(fetchCmd, { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    if (output) {
+      const mongoVars = JSON.parse(output);
+      if (mongoVars && Object.keys(mongoVars).length > 0) {
+        for (const [key, value] of Object.entries(mongoVars)) {
+          process.env[key] = value as string;
+        }
+      }
+    }
+  } catch (e) {
+    // Silent fallback to local .env file values already loaded above
+  }
 }
 
 /**

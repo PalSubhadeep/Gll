@@ -3,6 +3,7 @@ const { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder, RE
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { getEnvFromMongo, updateEnvInMongo } = require('./mongoEnvLoader');
 
 // Initialize Discord Client with DM support
 const client = new Client({
@@ -296,7 +297,41 @@ client.once('ready', async () => {
               { name: 'UAT (https://lockeruat.glcredentials.com)', value: 'uat' },
               { name: 'DEV (https://lockerdev.glcredentials.com)', value: 'dev' },
               { name: 'DEMO (https://lockerdemo.glcredentials.com)', value: 'demo' }
+            )),
+
+      new SlashCommandBuilder()
+        .setName('view-env')
+        .setDescription('View environment variables stored in MongoDB Atlas')
+        .addStringOption(option =>
+          option.setName('env')
+            .setDescription('Target environment (optional, defaults to DEV)')
+            .setRequired(false)
+            .addChoices(
+              { name: 'DEV', value: 'dev' },
+              { name: 'UAT', value: 'uat' },
+              { name: 'DEMO', value: 'demo' }
+            )),
+
+      new SlashCommandBuilder()
+        .setName('update-env')
+        .setDescription('Update or add an environment variable in MongoDB Atlas')
+        .addStringOption(option =>
+          option.setName('env')
+            .setDescription('Target environment (dev, uat, demo)')
+            .setRequired(true)
+            .addChoices(
+              { name: 'DEV', value: 'dev' },
+              { name: 'UAT', value: 'uat' },
+              { name: 'DEMO', value: 'demo' }
             ))
+        .addStringOption(option =>
+          option.setName('key')
+            .setDescription('Environment variable key (e.g. STUDENT_USERNAME, BASE_URL)')
+            .setRequired(true))
+        .addStringOption(option =>
+          option.setName('value')
+            .setDescription('Environment variable value')
+            .setRequired(true))
     ].map(command => command.toJSON());
 
     console.log('Started refreshing application (/) commands.');
@@ -331,12 +366,67 @@ client.on('interactionCreate', async (interaction) => {
     const helpEmbed = new EmbedBuilder()
       .setTitle('ℹ️ Playwright Test Bot Help')
       .setColor('#3498db')
-      .setDescription('Run Playwright tests or trigger admin creation directly from Discord.')
+      .setDescription('Run Playwright tests or manage environment variables stored in MongoDB Atlas.')
       .addFields(
-        { name: '`/run-tests`', value: 'Runs all or specific Playwright tests. Optionally specify `env` (`uat` or `dev`).' },
-        { name: '`/create-admin`', value: 'Creates a new Administrator account. Optionally specify `env` (`uat` or `dev`).' }
+        { name: '`/run-tests`', value: 'Runs Playwright tests using MongoDB Atlas configs (`dev`, `uat`, `demo`).' },
+        { name: '`/create-admin`', value: 'Creates a new Administrator account (`dev`, `uat`, `demo`).' },
+        { name: '`/view-env`', value: 'View variables stored in MongoDB Atlas for an environment.' },
+        { name: '`/update-env`', value: 'Update or set an environment variable in MongoDB Atlas dynamically.' }
       );
     return interaction.reply({ embeds: [helpEmbed] });
+  }
+
+  // view-env command
+  if (commandName === 'view-env') {
+    const envArg = (interaction.options.getString('env') || 'dev').toLowerCase();
+    await interaction.deferReply();
+
+    const mongoVars = await getEnvFromMongo(envArg);
+    if (!mongoVars || Object.keys(mongoVars).length === 0) {
+      return interaction.editReply({
+        content: `⚠️ No environment variables found in MongoDB Atlas for **${envArg.toUpperCase()}**. Run \`npm run env:seed\` or \`/update-env\` to add variables.`
+      });
+    }
+
+    const varLines = Object.entries(mongoVars).map(([k, v]) => {
+      const isSensitive = k.includes('PASSWORD') || k.includes('TOKEN') || k.includes('SECRET');
+      const valDisplay = isSensitive ? '********' : v;
+      return `• **${k}**: \`${valDisplay}\``;
+    }).slice(0, 25).join('\n');
+
+    const envEmbed = new EmbedBuilder()
+      .setTitle(`📁 MongoDB Atlas Variables: [${envArg.toUpperCase()}]`)
+      .setColor('#3498db')
+      .setDescription(varLines || 'No variables')
+      .setFooter({ text: `Total Variables: ${Object.keys(mongoVars).length}` })
+      .setTimestamp();
+
+    return interaction.editReply({ embeds: [envEmbed] });
+  }
+
+  // update-env command
+  if (commandName === 'update-env') {
+    const envArg = interaction.options.getString('env').toLowerCase();
+    const key = interaction.options.getString('key').trim();
+    const val = interaction.options.getString('value').trim();
+
+    await interaction.deferReply();
+
+    try {
+      await updateEnvInMongo(envArg, key, val);
+      const isSensitive = key.includes('PASSWORD') || key.includes('TOKEN') || key.includes('SECRET');
+      const displayVal = isSensitive ? '********' : val;
+
+      const successEmbed = new EmbedBuilder()
+        .setTitle(`✅ MongoDB Atlas Updated: [${envArg.toUpperCase()}]`)
+        .setColor('#2ecc71')
+        .setDescription(`Successfully updated variable for **${envArg.toUpperCase()}**:\n• **${key}** = \`${displayVal}\``)
+        .setTimestamp();
+
+      return interaction.editReply({ embeds: [successEmbed] });
+    } catch (err) {
+      return interaction.editReply({ content: `❌ Error updating MongoDB Atlas: ${err.message}` });
+    }
   }
 
   // run-tests command
@@ -344,6 +434,7 @@ client.on('interactionCreate', async (interaction) => {
     const testArg = interaction.options.getString('testname');
     const envOption = interaction.options.getString('env');
     const resolvedEnv = resolveEnvironment(envOption);
+    const targetEnvKey = (envOption || 'dev').toLowerCase();
     const envDisplay = resolvedEnv.envName ? `${resolvedEnv.envName} (${resolvedEnv.baseUrl})` : `Default (${process.env.BASE_URL || 'from .env'})`;
 
     // Defer reply immediately to prevent 3-second timeout
@@ -385,9 +476,15 @@ client.on('interactionCreate', async (interaction) => {
     const testResultsDir = path.join(__dirname, '..', 'test-results');
     cleanDirectory(testResultsDir);
 
-    const execEnv = { ...process.env };
+    const execEnv = { ...process.env, ENV: targetEnvKey };
     if (resolvedEnv.baseUrl) {
       execEnv.BASE_URL = resolvedEnv.baseUrl;
+    }
+    const mongoVars = await getEnvFromMongo(targetEnvKey);
+    if (mongoVars && Object.keys(mongoVars).length > 0) {
+      for (const [k, v] of Object.entries(mongoVars)) {
+        execEnv[k] = v;
+      }
     }
 
     // Execute the tests
@@ -613,14 +710,72 @@ client.on('messageCreate', async (message) => {
     const helpEmbed = new EmbedBuilder()
       .setTitle('ℹ️ Playwright Test Bot Help')
       .setColor('#3498db')
-      .setDescription('Run Playwright tests or trigger admin creation directly from Discord.')
+      .setDescription('Run Playwright tests or manage environment variables stored in MongoDB Atlas.')
       .addFields(
-        { name: '`!run-tests`', value: 'Runs all Playwright tests. Add optional environment: `--env=uat`, `--env=dev`, `--env=demo` (defaults to DEV).' },
+        { name: '`!run-tests`', value: 'Runs Playwright tests (`--env=dev`, `--env=uat`, `--env=demo`).' },
         { name: '`!run-tests <script>`', value: 'Runs a specific script from package.json (e.g. `!run-tests shareEmail --env=demo`).' },
-        { name: '`!run-tests <spec-name>`', value: 'Runs a specific spec file (e.g. `!run-tests registration demo`).' },
-        { name: '`!create-admin <args>`', value: 'Creates a new Administrator account (supports optional `--env=uat`, `--env=dev`, or `--env=demo`).\n*Formats supported:*\n1. Positional: `!create-admin username FirstName LastName email@test.com "University Name" Role1,Role2 --env=demo`\n2. Key-value: `!create-admin username=usr firstname=fn lastname=ln email=em university="Univ" roles=Role1,Role2 env=demo`' }
+        { name: '`!view-env <dev|uat|demo>`', value: 'Displays environment variables stored in MongoDB Atlas.' },
+        { name: '`!update-env <dev|uat|demo> KEY=VALUE`', value: 'Updates an environment variable in MongoDB Atlas (e.g. `!update-env dev STUDENT_USERNAME=subha-700`).' },
+        { name: '`!create-admin <args>`', value: 'Creates a new Administrator account.' }
       );
     return message.channel.send({ embeds: [helpEmbed] });
+  }
+
+  // View environment variables command
+  if (content.startsWith('!view-env')) {
+    const rawArgs = content.split(' ').slice(1);
+    const targetEnv = (rawArgs[0] || 'dev').toLowerCase();
+    const mongoVars = await getEnvFromMongo(targetEnv);
+
+    if (!mongoVars || Object.keys(mongoVars).length === 0) {
+      return message.channel.send(`⚠️ No environment variables found in MongoDB Atlas for **${targetEnv.toUpperCase()}**.`);
+    }
+
+    const varLines = Object.entries(mongoVars).map(([k, v]) => {
+      const isSensitive = k.includes('PASSWORD') || k.includes('TOKEN') || k.includes('SECRET');
+      const valDisplay = isSensitive ? '********' : v;
+      return `• **${k}**: \`${valDisplay}\``;
+    }).slice(0, 25).join('\n');
+
+    const envEmbed = new EmbedBuilder()
+      .setTitle(`📁 MongoDB Atlas Variables: [${targetEnv.toUpperCase()}]`)
+      .setColor('#3498db')
+      .setDescription(varLines || 'No variables')
+      .setFooter({ text: `Total Variables: ${Object.keys(mongoVars).length}` })
+      .setTimestamp();
+
+    return message.channel.send({ embeds: [envEmbed] });
+  }
+
+  // Update environment variable command
+  if (content.startsWith('!update-env')) {
+    const rawArgs = content.split(' ').slice(1);
+    const targetEnv = (rawArgs[0] || '').toLowerCase();
+    const kvPair = rawArgs.slice(1).join(' ');
+    
+    if (!['dev', 'uat', 'demo'].includes(targetEnv) || !kvPair.includes('=')) {
+      return message.channel.send(`❌ Invalid format. Usage: \`!update-env <dev|uat|demo> KEY=VALUE\` (e.g. \`!update-env dev STUDENT_USERNAME=subha-700\`)`);
+    }
+
+    const eqIdx = kvPair.indexOf('=');
+    const key = kvPair.substring(0, eqIdx).trim();
+    const value = kvPair.substring(eqIdx + 1).trim();
+
+    try {
+      await updateEnvInMongo(targetEnv, key, value);
+      const isSensitive = key.includes('PASSWORD') || key.includes('TOKEN') || key.includes('SECRET');
+      const displayVal = isSensitive ? '********' : value;
+
+      const successEmbed = new EmbedBuilder()
+        .setTitle(`✅ MongoDB Atlas Updated: [${targetEnv.toUpperCase()}]`)
+        .setColor('#2ecc71')
+        .setDescription(`Successfully updated variable for **${targetEnv.toUpperCase()}**:\n• **${key}** = \`${displayVal}\``)
+        .setTimestamp();
+
+      return message.channel.send({ embeds: [successEmbed] });
+    } catch (err) {
+      return message.channel.send(`❌ Error updating MongoDB Atlas: ${err.message}`);
+    }
   }
 
   // Run tests command
@@ -644,6 +799,7 @@ client.on('messageCreate', async (message) => {
     }
 
     const resolvedEnv = resolveEnvironment(envArg);
+    const targetEnvKey = (envArg || 'dev').toLowerCase();
     const envDisplay = resolvedEnv.envName ? `${resolvedEnv.envName} (${resolvedEnv.baseUrl})` : `Default (${process.env.BASE_URL || 'from .env'})`;
 
     let command = 'npx playwright test';
@@ -651,7 +807,7 @@ client.on('messageCreate', async (message) => {
 
     // Map known scripts or match spec files
     if (testArg && testArg !== 'all') {
-      const knownScripts = ['shareEmail', 'shareInst', 'scheduledShare', 'shareDoc', 'shareBadge', 'shareCertificate', 'register', 'debugRegister'];
+      const knownScripts = ['shareEmail', 'shareInst', 'scheduledShare', 'shareDoc', 'shareBadge', 'shareCertificate', 'ferpa', 'register', 'debugRegister'];
       if (knownScripts.includes(testArg)) {
         command = `npm run ${testArg}`;
         targetDescription = `npm script: ${testArg}`;
@@ -683,9 +839,15 @@ client.on('messageCreate', async (message) => {
     const testResultsDir = path.join(__dirname, '..', 'test-results');
     cleanDirectory(testResultsDir);
 
-    const execEnv = { ...process.env };
+    const execEnv = { ...process.env, ENV: targetEnvKey };
     if (resolvedEnv.baseUrl) {
       execEnv.BASE_URL = resolvedEnv.baseUrl;
+    }
+    const mongoVars = await getEnvFromMongo(targetEnvKey);
+    if (mongoVars && Object.keys(mongoVars).length > 0) {
+      for (const [k, v] of Object.entries(mongoVars)) {
+        execEnv[k] = v;
+      }
     }
 
     // Execute the tests
